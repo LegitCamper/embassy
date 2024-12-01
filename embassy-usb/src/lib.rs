@@ -719,7 +719,13 @@ impl<'d, D: Driver<'d>> Inner<'d, D> {
         let (dtype, index) = req.descriptor_type_index();
 
         match dtype {
-            descriptor_type::BOS => InResponse::Accepted(self.bos_descriptor),
+            descriptor_type::BOS => {
+                if !self.bos_descriptor.is_empty() {
+                    InResponse::Accepted(self.bos_descriptor)
+                } else {
+                    InResponse::Rejected
+                }
+            }
             descriptor_type::DEVICE => InResponse::Accepted(&self.device_descriptor),
             descriptor_type::CONFIGURATION => InResponse::Accepted(self.config_descriptor),
             descriptor_type::STRING => {
