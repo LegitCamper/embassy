@@ -767,7 +767,7 @@ impl<'d, D: Driver<'d>> Inner<'d, D> {
                     }
                 }
             }
-            descriptor_type::DEVICE_QUALIFIER => InResponse::Accepted(&self.device_qualifier_descriptor),
+            descriptor_type::DEVICE_QUALIFIER => InResponse::Rejected,
             _ => InResponse::Rejected,
         }
     }
