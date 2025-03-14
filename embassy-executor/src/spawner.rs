@@ -1,6 +1,7 @@
-use core::future::poll_fn;
+use core::future::{poll_fn, Future};
 use core::marker::PhantomData;
 use core::mem;
+use core::sync::atomic::Ordering;
 use core::task::Poll;
 
 use super::raw;
@@ -50,8 +51,7 @@ impl<S> Drop for SpawnToken<S> {
 }
 
 /// Error returned when spawning a task.
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone)]
 pub enum SpawnError {
     /// Too many instances of this task are already running.
     ///
@@ -60,6 +60,31 @@ pub enum SpawnError {
     /// `#[embassy_executor::task(pool_size = 4)]`, at the cost of higher RAM usage.
     Busy,
 }
+
+impl core::fmt::Debug for SpawnError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self, f)
+    }
+}
+
+impl core::fmt::Display for SpawnError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            SpawnError::Busy => write!(f, "Busy - Too many instances of this task are already running. Check the `pool_size` attribute of the task."),
+        }
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for SpawnError {
+    fn format(&self, f: defmt::Formatter) {
+        match self {
+            SpawnError::Busy => defmt::write!(f, "Busy - Too many instances of this task are already running. Check the `pool_size` attribute of the task."),
+        }
+    }
+}
+
+impl core::error::Error for SpawnError {}
 
 /// Handle to spawn tasks into an executor.
 ///
@@ -89,14 +114,19 @@ impl Spawner {
     /// # Panics
     ///
     /// Panics if the current executor is not an Embassy executor.
-    pub async fn for_current_executor() -> Self {
+    pub fn for_current_executor() -> impl Future<Output = Self> {
         poll_fn(|cx| {
             let task = raw::task_from_waker(cx.waker());
-            let executor = unsafe { task.header().executor.get().unwrap_unchecked() };
+            let executor = unsafe {
+                task.header()
+                    .executor
+                    .load(Ordering::Relaxed)
+                    .as_ref()
+                    .unwrap_unchecked()
+            };
             let executor = unsafe { raw::Executor::wrap(executor) };
             Poll::Ready(Self::new(executor))
         })
-        .await
     }
 
     /// Spawn a task into an executor.
@@ -161,13 +191,18 @@ impl SendSpawner {
     /// # Panics
     ///
     /// Panics if the current executor is not an Embassy executor.
-    pub async fn for_current_executor() -> Self {
+    pub fn for_current_executor() -> impl Future<Output = Self> {
         poll_fn(|cx| {
             let task = raw::task_from_waker(cx.waker());
-            let executor = unsafe { task.header().executor.get().unwrap_unchecked() };
+            let executor = unsafe {
+                task.header()
+                    .executor
+                    .load(Ordering::Relaxed)
+                    .as_ref()
+                    .unwrap_unchecked()
+            };
             Poll::Ready(Self::new(executor))
         })
-        .await
     }
 
     /// Spawn a task into an executor.

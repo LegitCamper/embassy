@@ -16,7 +16,7 @@ pub struct PioI2sOutProgram<'a, PIO: Instance> {
 impl<'a, PIO: Instance> PioI2sOutProgram<'a, PIO> {
     /// Load the program into the given pio
     pub fn new(common: &mut Common<'a, PIO>) -> Self {
-        let prg = pio_proc::pio_asm!(
+        let prg = pio::pio_asm!(
             ".side_set 2",
             "    set x, 14          side 0b01", // side 0bWB - W = Word Clock, B = Bit Clock
             "left_data:",
@@ -67,7 +67,7 @@ impl<'a, P: Instance, const S: usize> PioI2sOut<'a, P, S> {
             cfg.use_program(&program.prg, &[&bit_clock_pin, &left_right_clock_pin]);
             cfg.set_out_pins(&[&data_pin]);
             let clock_frequency = sample_rate * bit_depth * channels;
-            cfg.clock_divider = (125_000_000. / clock_frequency as f64 / 2.).to_fixed();
+            cfg.clock_divider = (crate::clocks::clk_sys_freq() as f64 / clock_frequency as f64 / 2.).to_fixed();
             cfg.shift_out = ShiftConfig {
                 threshold: 32,
                 direction: ShiftDirection::Left,
@@ -90,6 +90,6 @@ impl<'a, P: Instance, const S: usize> PioI2sOut<'a, P, S> {
 
     /// Return an in-prograss dma transfer future. Awaiting it will guarentee a complete transfer.
     pub fn write<'b>(&'b mut self, buff: &'b [u32]) -> Transfer<'b, AnyChannel> {
-        self.sm.tx().dma_push(self.dma.reborrow(), buff)
+        self.sm.tx().dma_push(self.dma.reborrow(), buff, false)
     }
 }
