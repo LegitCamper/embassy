@@ -39,6 +39,7 @@ impl<'a, PIO: Instance> PioI2sOutProgram<'a, PIO> {
 /// Pio backed I2s output driver
 pub struct PioI2sOut<'a, P: Instance, const S: usize> {
     dma: PeripheralRef<'a, AnyChannel>,
+    cfg: Config<'a, P>,
     sm: StateMachine<'a, P, S>,
 }
 
@@ -84,6 +85,7 @@ impl<'a, P: Instance, const S: usize> PioI2sOut<'a, P, S> {
 
         Self {
             dma: dma.map_into(),
+            cfg,
             sm,
         }
     }
@@ -91,5 +93,11 @@ impl<'a, P: Instance, const S: usize> PioI2sOut<'a, P, S> {
     /// Return an in-prograss dma transfer future. Awaiting it will guarentee a complete transfer.
     pub fn write<'b>(&'b mut self, buff: &'b [u32]) -> Transfer<'b, AnyChannel> {
         self.sm.tx().dma_push(self.dma.reborrow(), buff, false)
+    }
+
+    pub fn update_config(&mut self, sample_rate: u32, bit_depth: u32, channels: u32) {
+        let clock_frequency = sample_rate * bit_depth * channels;
+        self.cfg.clock_divider = (crate::clocks::clk_sys_freq() as f64 / clock_frequency as f64 / 2.).to_fixed();
+        self.sm.set_config(&self.cfg);
     }
 }
