@@ -5,6 +5,7 @@ pub mod i2s;
 pub mod onewire;
 pub mod pwm;
 pub mod rotary_encoder;
+pub mod sdio;
 pub mod stepper;
 pub mod uart;
 pub mod ws2812;
