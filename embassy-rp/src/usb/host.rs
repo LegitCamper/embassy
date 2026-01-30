@@ -122,9 +122,8 @@ impl<'d, T: Instance, E: channel::Type, D: channel::Direction> Channel<'d, T, E,
         assert!(buf_addr + buf_len <= EP_MEMORY_SIZE as u16);
         assert!(ep_info.max_packet_size <= buf_len);
 
-        // TODO: Support isochronous, bulk, and interrupt OUT
+        // TODO: Support isochronous, and interrupt OUT
         assert!(E::ep_type() != EndpointType::Isochronous);
-        assert!(E::ep_type() != EndpointType::Bulk);
         assert!(!(E::ep_type() == EndpointType::Interrupt && D::is_out()));
 
         if ep_info.ep_type == EndpointType::Interrupt {
