@@ -45,12 +45,12 @@ pub struct BtDriver<'d> {
 
 pub(crate) struct BtRunner<'d> {
     pub(crate) tx_chan: zerocopy_channel::Receiver<'d, NoopRawMutex, BtPacketBuf>,
-    rx_chan: zerocopy_channel::Sender<'d, NoopRawMutex, BtPacketBuf>,
+    pub(crate) rx_chan: zerocopy_channel::Sender<'d, NoopRawMutex, BtPacketBuf>,
 
     // Bluetooth circular buffers
-    addr: u32,
-    h2b_write_pointer: u32,
-    b2h_read_pointer: u32,
+    pub(crate) addr: u32,
+    pub(crate) h2b_write_pointer: u32,
+    pub(crate) b2h_read_pointer: u32,
 }
 
 const BT_HCI_MTU: usize = 1024;
@@ -334,7 +334,7 @@ impl<'a> BtRunner<'a> {
         bus.bp_write32(self.addr + BTSDIO_OFFSET_BT2HOST_OUT, 0).await;
     }
 
-    async fn bt_bus_request(&mut self, bus: &mut impl Bus) {
+    pub(crate) async fn bt_bus_request(&mut self, bus: &mut impl Bus) {
         // TODO: CYW43_THREAD_ENTER mutex?
         self.bt_set_awake(bus, true).await;
         self.wait_bt_awake(bus).await;
@@ -506,17 +506,23 @@ impl embedded_io_async::Error for Error {
 }
 
 impl<'d> bt_hci::transport::Transport for BtDriver<'d> {
+    /// A short buffer returns `InvalidInput` without consuming the queued packet.
     fn read<'a>(&self, rx: &'a mut [u8]) -> impl Future<Output = Result<ControllerToHostPacket<'a>, Self::Error>> {
         async {
             let ch = &mut *self.rx.borrow_mut();
             let buf = ch.receive().await;
             let n = buf.len;
-            assert!(n < rx.len());
+            if n > rx.len() {
+                return Err(Error::Io(ErrorKind::InvalidInput));
+            }
             rx[..n].copy_from_slice(&buf.buf[..n]);
             ch.receive_done();
 
             let kind = PacketKind::from_hci_bytes_complete(&rx[..1])?;
-            let (pkt, _) = ControllerToHostPacket::from_hci_bytes_with_kind(kind, &rx[1..n])?;
+            let (pkt, remainder) = ControllerToHostPacket::from_hci_bytes_with_kind(kind, &rx[1..n])?;
+            if !remainder.is_empty() {
+                return Err(Error::Io(ErrorKind::InvalidData));
+            }
             Ok(pkt)
         }
     }
@@ -535,5 +541,109 @@ impl<'d> bt_hci::transport::Transport for BtDriver<'d> {
             ch.send_done();
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+
+    use bt_hci::data::IsoPacketBoundary;
+    use bt_hci::transport::Transport;
+
+    use super::*;
+
+    fn ready<F: Future>(future: F) -> F::Output {
+        match pin!(future).as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+            Poll::Ready(value) => value,
+            Poll::Pending => panic!("queued packet unexpectedly blocked"),
+        }
+    }
+
+    fn enqueue(runner: &mut BtRunner<'_>, bytes: &[u8]) {
+        let packet = ready(runner.rx_chan.send());
+        packet.buf[..bytes.len()].copy_from_slice(bytes);
+        packet.len = bytes.len();
+        runner.rx_chan.send_done();
+    }
+
+    fn iso() -> [u8; 35] {
+        let mut packet = [0x5a; 35];
+        packet[..9].copy_from_slice(&[5, 0x42, 0x20, 30, 0, 0xfe, 0xff, 26, 0]);
+        packet
+    }
+
+    #[test]
+    fn inbound_iso_accepts_exact_buffer_and_keeps_packet_on_short_buffer() {
+        let mut state = BtState::new();
+        let (mut runner, driver) = new(&mut state);
+        enqueue(&mut runner, &iso());
+        for capacity in [0, 34] {
+            assert!(matches!(
+                ready(driver.read(&mut [0; 35][..capacity])),
+                Err(Error::Io(ErrorKind::InvalidInput))
+            ));
+        }
+        let mut buffer = [0; 35];
+        let ControllerToHostPacket::Iso(packet) = ready(driver.read(&mut buffer)).unwrap() else {
+            panic!("wrong packet type");
+        };
+        assert_eq!(packet.handle().raw(), 0x42);
+        assert_eq!(packet.boundary_flag(), IsoPacketBoundary::Complete);
+        let header = packet.data_load_header().unwrap();
+        assert_eq!(
+            (header.sequence_num, header.iso_sdu_len, header.timestamp),
+            (0xfffe, 26, None)
+        );
+        assert_eq!(packet.data(), &[0x5a; 26]);
+    }
+
+    #[test]
+    fn inbound_iso_rejects_truncated_or_trailing_data_then_reads_next_packet() {
+        let mut state = BtState::new();
+        let (mut runner, driver) = new(&mut state);
+        let mut truncated = iso();
+        truncated[3] = 31;
+        enqueue(&mut runner, &truncated);
+        let mut trailing = [0; 36];
+        trailing[..35].copy_from_slice(&iso());
+        enqueue(&mut runner, &trailing);
+        enqueue(&mut runner, &iso());
+        let mut buffer = [0; 36];
+        assert!(matches!(
+            ready(driver.read(&mut buffer)),
+            Err(Error::Io(ErrorKind::InvalidInput))
+        ));
+        assert!(matches!(
+            ready(driver.read(&mut buffer)),
+            Err(Error::Io(ErrorKind::InvalidData))
+        ));
+        assert!(matches!(
+            ready(driver.read(&mut buffer)),
+            Ok(ControllerToHostPacket::Iso(_))
+        ));
+    }
+
+    #[test]
+    fn inbound_iso_preserves_timestamp_and_raw_lost_status() {
+        let mut state = BtState::new();
+        let (mut runner, driver) = new(&mut state);
+        let mut timestamped = [0x5a; 39];
+        timestamped[..13].copy_from_slice(&[5, 0x42, 0x60, 34, 0, 0x78, 0x56, 0x34, 0x12, 7, 0, 26, 0]);
+        enqueue(&mut runner, &timestamped);
+        enqueue(&mut runner, &[5, 0x42, 0x20, 4, 0, 8, 0, 0, 0x80]);
+        let mut buffer = [0; 39];
+        let ControllerToHostPacket::Iso(packet) = ready(driver.read(&mut buffer)).unwrap() else {
+            panic!("wrong packet type");
+        };
+        assert_eq!(packet.data_load_header().unwrap().timestamp, Some(0x12345678));
+        assert_eq!(packet.data(), &[0x5a; 26]);
+        let ControllerToHostPacket::Iso(packet) = ready(driver.read(&mut buffer)).unwrap() else {
+            panic!("wrong packet type");
+        };
+        let header = packet.data_load_header().unwrap();
+        assert_eq!((header.sequence_num, header.iso_sdu_len), (8, 0x8000));
+        assert!(packet.data().is_empty());
     }
 }

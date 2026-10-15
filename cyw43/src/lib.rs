@@ -1,5 +1,5 @@
 #![no_std]
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 #![allow(async_fn_in_trait)]
 #![allow(unsafe_op_in_unsafe_fn)]
 #![deny(unused_must_use)]
@@ -12,6 +12,8 @@ pub(crate) mod fmt;
 #[cfg(feature = "bluetooth")]
 /// Bluetooth module.
 pub mod bluetooth;
+#[cfg(feature = "bluetooth-iso")]
+pub mod iso;
 mod consts;
 mod control;
 mod countries;
