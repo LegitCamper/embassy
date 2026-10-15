@@ -753,8 +753,24 @@ impl<'a, BUS: Bus, CHIP: Chip> Runner<'a, BUS, CHIP> {
 
     /// Run the CYW43 event handling loop.
     pub async fn run(mut self) -> ! {
+        self.run_inner(None).await;
+        core::future::pending().await
+    }
+
+    /// Run the event loop until `stop` is set, then return at an iteration
+    /// boundary so startup diagnostics can safely reuse the bus.
+    #[cfg(feature = "bluetooth-iso")]
+    pub async fn run_borrowed_until(&mut self, stop: &core::sync::atomic::AtomicBool) {
+        self.run_inner(Some(stop)).await
+    }
+
+    async fn run_inner(&mut self, stop: Option<&core::sync::atomic::AtomicBool>) {
         let mut buf = Aligned([0u8; 4 + 2048]);
         loop {
+            if stop.is_some_and(|stop| stop.load(core::sync::atomic::Ordering::Acquire)) {
+                return;
+            }
+
             #[cfg(feature = "firmware-logs")]
             self.log_read(&mut buf).await;
 

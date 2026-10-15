@@ -9,7 +9,9 @@ use embedded_hal_1::digital::OutputPin;
 
 use crate::{Cyw43439, Runner, SpiBus, SpiBusCyw43};
 
-pub use cyw43_controller::{Error, Installed, InstalledRxDiagnostic};
+pub use cyw43_controller::{
+    BOOT_FIRMWARE, BOOT_FIRMWARE_SHA256, Error, Installed, InstalledRxDiagnostic, TimerHopTrace,
+};
 
 impl<PWR, SPI> cyw43_controller::Runtime for Runner<'_, SpiBus<PWR, SPI>, Cyw43439>
 where
@@ -59,4 +61,15 @@ pub async fn install_rx_hop_diagnostic<PWR: OutputPin, SPI: SpiBusCyw43>(
     runner: &mut Runner<'_, SpiBus<PWR, SPI>, Cyw43439>,
 ) -> Result<InstalledRxDiagnostic, Error> {
     cyw43_controller::install_rx_hop_diagnostic(runner).await
+}
+
+/// Install timer-driven CSA#2 hopping continuous RX diagnostic.
+///
+/// The event counter advances every 32 stock DTM countdown callbacks. The
+/// first valid counter marker anchors the diagnostic phase; this is not
+/// BIGInfo-derived broadcast synchronization.
+pub async fn install_rx_timer_hop_diagnostic<PWR: OutputPin, SPI: SpiBusCyw43>(
+    runner: &mut Runner<'_, SpiBus<PWR, SPI>, Cyw43439>,
+) -> Result<InstalledRxDiagnostic, Error> {
+    cyw43_controller::install_rx_timer_hop_diagnostic(runner).await
 }
