@@ -18,8 +18,8 @@ pub trait SpiBusCyw43 {
     /// Issues a read command on the bus
     /// `write` is expected to be a 32 bit cmd word
     /// `read` will contain the response of the device
-    /// Backplane reads have a response delay that produces one extra unspecified word at the beginning of `read`.
-    /// Callers that want to read `n` word from the backplane, have to provide a slice that is `n+1` words long.
+    /// Backplane reads prepend the configured F1 response delay. The driver supplies
+    /// space for the requested data plus all delay words.
     async fn cmd_read(&mut self, write: u32, read: &mut [u32]) -> u32;
 
     /// Wait for events from the Device. A typical implementation would wait for the IRQ pin to be high.
@@ -112,14 +112,11 @@ where
 
     async fn readn(&mut self, func: u32, addr: u32, len: u32) -> u32 {
         let cmd = cmd_word(READ, INC_ADDR, func, addr, len);
-        let mut buf = [0; 2];
-        // if we are reading from the backplane, we need an extra word for the response delay
-        let len = if func == FUNC_BACKPLANE { 2 } else { 1 };
-
-        self.status = self.spi.cmd_read(cmd, &mut buf[..len]).await;
-
-        // if we read from the backplane, the result is in the second word, after the response delay
-        if func == FUNC_BACKPLANE { buf[1] } else { buf[0] }
+        const PAD_WORDS: usize = WHD_BUS_SPI_BACKPLANE_READ_PADD_SIZE as usize / 4;
+        let mut buf = [0; PAD_WORDS + 1];
+        let padding = if func == FUNC_BACKPLANE { PAD_WORDS } else { 0 };
+        self.status = self.spi.cmd_read(cmd, &mut buf[..padding + 1]).await;
+        buf[padding]
     }
 
     async fn writen(&mut self, func: u32, addr: u32, val: u32, len: u32) {
@@ -271,8 +268,9 @@ where
         // To simplify, enforce 4-align for now.
         assert!(addr % 4 == 0);
 
-        // Backplane read buffer has one extra word for the response delay.
-        let mut buf = [0u32; BACKPLANE_MAX_TRANSFER_SIZE / 4 + 1];
+        // Controller memory needs 16 delay bytes at GSPI speed; SDK uses the same value.
+        const PAD_WORDS: usize = WHD_BUS_SPI_BACKPLANE_READ_PADD_SIZE as usize / 4;
+        let mut buf = [0u32; BACKPLANE_MAX_TRANSFER_SIZE / 4 + PAD_WORDS];
 
         while !data.is_empty() {
             // Ensure transfer doesn't cross a window boundary.
@@ -283,18 +281,22 @@ where
 
             self.backplane_set_window(addr).await;
 
+            #[cfg(feature = "bluetooth-iso")]
+            let window_offs = window_offs | BACKPLANE_ADDRESS_32BIT_FLAG;
             let cmd = cmd_word(READ, INC_ADDR, FUNC_BACKPLANE, window_offs, len as u32);
 
-            // round `buf` to word boundary, add one extra word for the response delay
-            self.status = self.spi.cmd_read(cmd, &mut buf[..(len + 3) / 4 + 1]).await;
+            // Include every configured response-delay word.
+            self.status = self.spi.cmd_read(cmd, &mut buf[..(len + 3) / 4 + PAD_WORDS]).await;
 
-            // when writing out the data, we skip the response-delay byte
-            data[..len].copy_from_slice(&slice8_mut(&mut buf[1..])[..len]);
+            // Skip the complete response delay.
+            data[..len].copy_from_slice(&slice8_mut(&mut buf[PAD_WORDS..])[..len]);
 
             // Advance ptr.
             addr += len as u32;
             data = &mut data[len..];
         }
+        #[cfg(feature = "bluetooth-iso")]
+        self.backplane_set_window(CHIPCOMMON_BASE_ADDRESS).await;
     }
 
     async fn bp_write(&mut self, mut addr: u32, mut data: &[u8]) {
@@ -318,6 +320,8 @@ where
 
             self.backplane_set_window(addr).await;
 
+            #[cfg(feature = "bluetooth-iso")]
+            let window_offs = window_offs | BACKPLANE_ADDRESS_32BIT_FLAG;
             let cmd = cmd_word(WRITE, INC_ADDR, FUNC_BACKPLANE, window_offs, len as u32);
             buf[0] = cmd;
 
@@ -327,6 +331,8 @@ where
             addr += len as u32;
             data = &data[len..];
         }
+        #[cfg(feature = "bluetooth-iso")]
+        self.backplane_set_window(CHIPCOMMON_BASE_ADDRESS).await;
     }
 
     async fn bp_read8(&mut self, addr: u32) -> u8 {
