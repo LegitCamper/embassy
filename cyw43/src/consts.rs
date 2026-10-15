@@ -184,7 +184,8 @@ pub(crate) const BTFW_HEX_LINE_TYPE_ABSOLUTE_32BIT_ADDRESS: u8 = 5;
 
 // Bluetooth constants.
 pub(crate) const SPI_RESP_DELAY_F1: u32 = 0x001d;
-pub(crate) const WHD_BUS_SPI_BACKPLANE_READ_PADD_SIZE: u8 = 4;
+pub(crate) const WHD_BUS_SPI_BACKPLANE_READ_PADD_SIZE: u8 =
+    if cfg!(feature = "bluetooth-iso") { 16 } else { 4 };
 
 pub(crate) const BT2WLAN_PWRUP_WAKE: u32 = 3;
 pub(crate) const BT2WLAN_PWRUP_ADDR: u32 = 0x640894;
