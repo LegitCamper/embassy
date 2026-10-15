@@ -2,14 +2,9 @@ use core::cell::RefCell;
 use core::future::Future;
 use core::mem::MaybeUninit;
 
-<<<<<<< HEAD
 use aligned::{A4, Aligned};
-use bt_hci::transport::WithIndicator;
-use bt_hci::{ControllerToHostPacket, FromHciBytes, FromHciBytesError, HostToControllerPacket, PacketKind, WriteHci};
-=======
 use bt_hci::transport::{PacketToController, PacketToHost, WithIndicator};
 use bt_hci::{FromHciBytes, FromHciBytesError, PacketKind, ReadHciError};
->>>>>>> 080b8a79c (build(cyw43): move the HCI transport to bt-hci 0.11)
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::zerocopy_channel;
@@ -565,19 +560,7 @@ impl<'d> bt_hci::transport::Transport for BtDriver<'d> {
             if !keep_queued {
                 ch.receive_done();
             }
-<<<<<<< HEAD
-            rx[..n].copy_from_slice(&buf.buf[..n]);
-            buf.receive_done();
-
-            let kind = PacketKind::from_hci_bytes_complete(&rx[..1])?;
-            let (pkt, remainder) = ControllerToHostPacket::from_hci_bytes_with_kind(kind, &rx[1..n])?;
-            if !remainder.is_empty() {
-                return Err(Error::Io(ErrorKind::InvalidData));
-            }
-            Ok(pkt)
-=======
             outcome
->>>>>>> 080b8a79c (build(cyw43): move the HCI transport to bt-hci 0.11)
         }
     }
 
