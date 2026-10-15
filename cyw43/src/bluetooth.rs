@@ -538,27 +538,25 @@ impl<'d> bt_hci::transport::Transport for BtDriver<'d> {
         async {
             let ch = &mut *self.rx.borrow_mut();
             let mut keep_queued = false;
-            let outcome = {
-                let queued = ch.receive().await;
-                match queued.buf[..queued.len].split_first() {
-                    None => Err(Error::Io(ErrorKind::InvalidData)),
-                    Some((&indicator, mut payload)) => match PacketKind::from_hci_bytes_complete(&[indicator]) {
+            let queued = ch.receive().await;
+            let outcome = match queued.buf[..queued.len].split_first() {
+                None => Err(Error::Io(ErrorKind::InvalidData)),
+                Some((&indicator, mut payload)) => match PacketKind::from_hci_bytes_complete(&[indicator]) {
+                    Err(e) => Err(e.into()),
+                    Ok(kind) => match P::read_hci(kind, &mut payload, rx) {
+                        Err(ReadHciError::BufferTooSmall) => {
+                            keep_queued = true;
+                            Err(Error::Io(ErrorKind::InvalidInput))
+                        }
                         Err(e) => Err(e.into()),
-                        Ok(kind) => match P::read_hci(kind, &mut payload, rx) {
-                            Err(ReadHciError::BufferTooSmall) => {
-                                keep_queued = true;
-                                Err(Error::Io(ErrorKind::InvalidInput))
-                            }
-                            Err(e) => Err(e.into()),
-                            // Trailing bytes mean the controller framed it wrong.
-                            Ok(_) if !payload.is_empty() => Err(Error::Io(ErrorKind::InvalidData)),
-                            Ok(packet) => Ok(packet),
-                        },
+                        // Trailing bytes mean the controller framed it wrong.
+                        Ok(_) if !payload.is_empty() => Err(Error::Io(ErrorKind::InvalidData)),
+                        Ok(packet) => Ok(packet),
                     },
-                }
+                },
             };
             if !keep_queued {
-                ch.receive_done();
+                queued.receive_done();
             }
             outcome
         }
@@ -675,12 +673,14 @@ mod tests {
         enqueue(&mut runner, &timestamped);
         enqueue(&mut runner, &[5, 0x42, 0x20, 4, 0, 8, 0, 0, 0x80]);
         let mut buffer = [0; 39];
-        let ControllerToHostPacket::Iso(packet) = ready(driver.read::<ControllerToHostPacket>(&mut buffer)).unwrap() else {
+        let ControllerToHostPacket::Iso(packet) = ready(driver.read::<ControllerToHostPacket>(&mut buffer)).unwrap()
+        else {
             panic!("wrong packet type");
         };
         assert_eq!(packet.data_load_header().unwrap().timestamp, Some(0x12345678));
         assert_eq!(packet.data(), &[0x5a; 26]);
-        let ControllerToHostPacket::Iso(packet) = ready(driver.read::<ControllerToHostPacket>(&mut buffer)).unwrap() else {
+        let ControllerToHostPacket::Iso(packet) = ready(driver.read::<ControllerToHostPacket>(&mut buffer)).unwrap()
+        else {
             panic!("wrong packet type");
         };
         let header = packet.data_load_header().unwrap();
