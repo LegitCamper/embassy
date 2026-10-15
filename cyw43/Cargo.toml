@@ -42,7 +42,7 @@ aligned = "0.4.3"
 # Bluetooth deps
 embedded-io-async = { version = "0.7.0", optional = true }
 bt-hci = { version = "0.11", optional = true }
-cyw43-controller = { version = "0.1", git = "https://github.com/LegitCamper/cyw43-controller", rev = "20469e0a14f2ee3e97573bc2de9b8d082ea33843", optional = true }
+cyw43-controller = { version = "0.1", git = "https://github.com/LegitCamper/cyw43-controller", rev = "848457a2ef3a7a4978e888eac8eb975f5e905b2c", optional = true }
 trait-set = "0.3.0"
 
 [package.metadata.embassy]
