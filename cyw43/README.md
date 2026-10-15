@@ -92,10 +92,13 @@ resident memory stays allocated until reset. Every installer/start error or
 cancelled operation requires chip restart and firmware reload, even if rollback
 succeeded. HCI Reset alone does not reclaim memory or reliably remove RAM hooks.
 
-Native assets are referenced directly from sibling `../cyw43_iso/work/iso-blob-continuous`; no blob copies live in this checkout. Generate them first with `cyw43_iso/analysis/check-controller-tx.py
---continuous --output-blob work/iso-blob-continuous` from the associated
-`hardware/controller_audio.S`, `hardware/transport_callback.S`,
-`hardware/discovery_packet.c`, and `hardware/iso_credits.S` sources.
+Patch bytes and the installer state machine live in the separate
+[`cyw43-controller`](https://github.com/LegitCamper/cyw43-controller) crate,
+which carries its own checked blobs and installer tests. This module is only
+the Embassy bus adapter: it implements that crate's four-operation `Runtime`
+over `Runner` and re-exports the installer entry points. The blobs are
+reproducible from `cyw43_iso` and their digests are verified at build time by
+the controller crate, so no asset generation is needed here.
 ABI version 1 uses a controller-owned 4096-byte resident allocation and a
 112-byte temporary allocator. Firmware guards include raw Infineon manufacturer
 `0x0131`, LMP subversion `0x2310`, stock entry bytes/pointers, idle radio state,
@@ -203,13 +206,45 @@ external stock-controller and Nordic RRAM/UICR restoration checks. This
 establishes repeated fixed-channel reception, not BIG synchronization,
 hopping, encryption or LE Audio profiles.
 
-Offline installer check, run from `cyw43/`:
+### Open-loop hopping RX diagnostic
+
+`install_rx_hop_diagnostic(&mut runner)` uses a separate 2048-byte image with
+its own 112-byte bootstrap, because bootstraps encode their reservation size.
+Every matching radio callback, including CRC failures, advances a 16-bit event
+counter once and retunes to the next CSA#2 channel after the stock callback has
+rearmed the radio.
+
+The counter starts at zero with no BIGInfo anchor and advances only on
+reception, so a missed event leaves the receiver on a channel the transmitter
+has left. Successful installation is not broadcast synchrony, and delivered
+packet counts do not demonstrate it.
+
+| Hopping RX asset | SHA256 |
+| --- | --- |
+| `native.bin` | `18d2465e09e8b158ad73781ede07c2991dd62e2e7823770d83cd446292e6fbf1` |
+| `allocator.bin` | `dc1c2dfabb13f4a8de26ab8328de4def56944d2d646bbe65cf201295bdbc4d47` |
+
+Live RP2040 evidence is in `../cyw43_iso/work/embassy-normal-rx-hop-series`
+and `-series-v2`. A build that stopped at the first gap received 11
+consecutive events across nine distinct CSA#2 channels, which a fixed-channel
+receiver cannot produce. Over a full 20-second window the aligned transmitter
+delivered 15 SDUs with a longest consecutive run of 3, while a
+one-event-offset transmitter delivered a comparable 16 with no run at all, and
+the silent control delivered none. Retuning works; staying synchronised does
+not. See `cyw43_iso/analysis/controller-rx.md`.
+
+Offline checks, run from `cyw43/`:
 
 ```sh
-rustc --edition 2024 --test tests/iso-installer.rs -o /tmp/cyw43-iso-check
-/tmp/cyw43-iso-check
 python3 tests/check-spi-padding.py
 python3 tests/check-pio-read-order.py
 cargo test --lib --features bluetooth-iso --target x86_64-unknown-linux-gnu
 cargo check --features bluetooth-iso --target thumbv6m-none-eabi
+```
+
+Installer behaviour is tested in the controller crate:
+
+```sh
+cargo test -p cyw43-controller
+python3 cyw43-controller-blob/tests/abi.py
 ```
