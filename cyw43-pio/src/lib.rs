@@ -245,6 +245,7 @@ where
             .rx()
             .dma_pull(&mut self.dma, slice::from_mut(&mut status), false)
             .await;
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
         status
     }
 
@@ -270,14 +271,19 @@ where
         // self.cs.set_low();
         self.sm.set_enable(true);
 
-        self.sm.tx().dma_push(&mut self.dma, slice::from_ref(&cmd), false).await;
-        self.sm.rx().dma_pull(&mut self.dma, read, false).await;
+        // Arm RX before clocking the command: F1 padding can fill the RX FIFO.
+        let (rx, tx) = self.sm.rx_tx();
+        let transfer = rx.dma_pull(&mut self.dma, read, false);
+        tx.push(cmd);
+        transfer.await;
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
         let mut status = 0;
         self.sm
             .rx()
             .dma_pull(&mut self.dma, slice::from_mut(&mut status), false)
             .await;
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
         #[cfg(feature = "defmt")]
         defmt::trace!("cmd_read cmd = {:02x} len = {} read = {:08x}", cmd, read.len(), read);
