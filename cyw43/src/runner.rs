@@ -18,7 +18,7 @@ use crate::ioctl::{IoctlState, IoctlType, PendingIoctl};
 pub use crate::spi::SpiBusCyw43;
 use crate::structs::*;
 use crate::util::try_until;
-use crate::{Chip, ChipId, Core, MTU, WithContext, events};
+use crate::{Chip, ChipId, Core, MTU, SealedChip, WithContext, events};
 
 #[cfg(feature = "firmware-logs")]
 struct LogState {
@@ -27,6 +27,9 @@ struct LogState {
     buf: [u8; 256],
     buf_count: usize,
 }
+
+#[cfg(feature = "bluetooth-iso")]
+include!("iso_bootstrap.rs");
 
 #[cfg(feature = "firmware-logs")]
 impl Default for LogState {

@@ -1,0 +1,62 @@
+//! CYW43439 resident ISO patch integration.
+//!
+//! Patch bytes and installer state live in `cyw43-controller`. This module
+//! only gives that crate exclusive startup access through the CYW43 runner.
+
+use core::future::Future;
+
+use embedded_hal_1::digital::OutputPin;
+
+use crate::{Cyw43439, Runner, SpiBus, SpiBusCyw43};
+
+pub use cyw43_controller::{Error, Installed, InstalledRxDiagnostic};
+
+impl<PWR, SPI> cyw43_controller::Runtime for Runner<'_, SpiBus<PWR, SPI>, Cyw43439>
+where
+    PWR: OutputPin,
+    SPI: SpiBusCyw43,
+{
+    fn read(&mut self, address: u32, data: &mut [u8]) -> impl Future<Output = Result<(), ()>> {
+        async move { self.bluetooth_runtime_read(address, data).await.map_err(|_| ()) }
+    }
+
+    fn write(&mut self, address: u32, data: &[u8]) -> impl Future<Output = Result<(), ()>> {
+        async move { self.bluetooth_runtime_write(address, data).await.map_err(|_| ()) }
+    }
+
+    fn command(&mut self, command: &[u8], response: &mut [u8; 260]) -> impl Future<Output = Result<usize, ()>> {
+        async move { self.bluetooth_runtime_command(command, response).await.map_err(|_| ()) }
+    }
+
+    fn delay_millis(&mut self, millis: u32) -> impl Future<Output = ()> {
+        embassy_time::Timer::after_millis(u64::from(millis))
+    }
+}
+
+/// Validate stock firmware, install the TX image, and publish its hooks.
+pub async fn install<PWR: OutputPin, SPI: SpiBusCyw43>(
+    runner: &mut Runner<'_, SpiBus<PWR, SPI>, Cyw43439>,
+) -> Result<Installed, Error> {
+    cyw43_controller::install(runner).await
+}
+
+/// Install checked one-shot fixed-channel RX diagnostic.
+pub async fn install_rx_diagnostic<PWR: OutputPin, SPI: SpiBusCyw43>(
+    runner: &mut Runner<'_, SpiBus<PWR, SPI>, Cyw43439>,
+) -> Result<InstalledRxDiagnostic, Error> {
+    cyw43_controller::install_rx_diagnostic(runner).await
+}
+
+/// Install interrupt-woken continuous fixed-channel RX diagnostic.
+pub async fn install_rx_stream_diagnostic<PWR: OutputPin, SPI: SpiBusCyw43>(
+    runner: &mut Runner<'_, SpiBus<PWR, SPI>, Cyw43439>,
+) -> Result<InstalledRxDiagnostic, Error> {
+    cyw43_controller::install_rx_stream_diagnostic(runner).await
+}
+
+/// Install open-loop CSA#2 hopping RX diagnostic without BIG synchronization.
+pub async fn install_rx_hop_diagnostic<PWR: OutputPin, SPI: SpiBusCyw43>(
+    runner: &mut Runner<'_, SpiBus<PWR, SPI>, Cyw43439>,
+) -> Result<InstalledRxDiagnostic, Error> {
+    cyw43_controller::install_rx_hop_diagnostic(runner).await
+}

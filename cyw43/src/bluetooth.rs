@@ -598,10 +598,10 @@ mod tests {
     }
 
     fn enqueue(runner: &mut BtRunner<'_>, bytes: &[u8]) {
-        let packet = ready(runner.rx_chan.send());
+        let mut packet = ready(runner.rx_chan.send());
         packet.buf[..bytes.len()].copy_from_slice(bytes);
         packet.len = bytes.len();
-        runner.rx_chan.send_done();
+        packet.send_done();
     }
 
     fn iso() -> [u8; 35] {

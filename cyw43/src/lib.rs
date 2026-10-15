@@ -18,6 +18,8 @@ mod control;
 mod countries;
 mod events;
 mod ioctl;
+#[cfg(feature = "bluetooth-iso")]
+pub mod iso;
 mod runner;
 mod sdio;
 mod spi;
