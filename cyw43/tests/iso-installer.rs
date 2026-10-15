@@ -1,6 +1,7 @@
 //! Standalone: rustc --edition 2024 --test tests/iso-installer.rs -o /tmp/cyw43-iso-check && /tmp/cyw43-iso-check
 #![allow(dead_code)]
 extern crate self as embassy_time;
+extern crate self as cyw43_controller_blob;
 extern crate self as embedded_hal_1;
 use std::{
     collections::BTreeMap,
@@ -14,6 +15,35 @@ pub mod digital {
 }
 pub trait SpiBusCyw43 {}
 pub struct SpiBus<P, S>(PhantomData<(P, S)>);
+/// Stands in for the `cyw43-controller-blob` crate, reading the same files it
+/// ships, so this standalone test needs no Cargo. Declared at the crate root
+/// to match `extern crate self as cyw43_controller_blob` above. Array sizes are
+/// asserted by `include_bytes!`, so a resized image fails to compile here
+/// rather than silently weakening the checks below.
+pub const ALLOCATOR: &[u8; 112] =
+    include_bytes!("../../../cyw43-controller/cyw43-controller-blob/blobs/rx-stream/allocator.bin");
+pub mod continuous {
+    pub const IMAGE: &[u8; 4096] = include_bytes!(
+        "../../../cyw43-controller/cyw43-controller-blob/blobs/continuous/native.bin"
+    );
+    pub const ALLOCATOR: &[u8; 112] = include_bytes!(
+        "../../../cyw43-controller/cyw43-controller-blob/blobs/continuous/allocator.bin"
+    );
+}
+pub mod rx {
+    pub const IMAGE: &[u8; 1024] =
+        include_bytes!("../../../cyw43-controller/cyw43-controller-blob/blobs/rx/native.bin");
+    pub const ALLOCATOR: &[u8; 112] =
+        include_bytes!("../../../cyw43-controller/cyw43-controller-blob/blobs/rx/allocator.bin");
+}
+pub mod rx_stream {
+    pub const IMAGE: &[u8; 1024] =
+        include_bytes!("../../../cyw43-controller/cyw43-controller-blob/blobs/rx-stream/native.bin");
+    pub const ALLOCATOR: &[u8; 112] = include_bytes!(
+        "../../../cyw43-controller/cyw43-controller-blob/blobs/rx-stream/allocator.bin"
+    );
+}
+
 pub struct Timer;
 impl Timer {
     pub async fn after_millis(_: u64) {}
@@ -274,7 +304,7 @@ fn rx_start_rejects_mismatched_radio_configuration_and_can_stop() {
 fn rx_stream_selects_separate_blob_and_preserves_same_lifecycle() {
     let mut runner = setup();
     let mut installed = ready(runtime::install_rx_stream_diagnostic(&mut runner)).unwrap();
-    let image = include_bytes!("../../../cyw43_iso/work/iso-blob-rx-stream/native.bin");
+    let image = rx_stream::IMAGE;
     assert_eq!(runner.bytes(ALLOCATION, 256), image[..256]);
     assert_eq!(runner.bytes(ALLOCATION + 300, 724), image[300..]);
     assert_eq!(runner.word(0x200564), ALLOCATION + 1024);

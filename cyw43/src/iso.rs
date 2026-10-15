@@ -12,11 +12,15 @@
 use crate::{Runner, SpiBus, SpiBusCyw43};
 use embedded_hal_1::digital::OutputPin;
 
-const IMAGE: &[u8; 4096] = include_bytes!("../../../cyw43_iso/work/iso-blob-continuous/native.bin");
-const ALLOCATOR: &[u8; 112] = include_bytes!("../../../cyw43_iso/work/iso-blob-continuous/allocator.bin");
-const RX_IMAGE: &[u8; 1024] = include_bytes!("../../../cyw43_iso/work/iso-blob-rx/native.bin");
-const RX_ALLOCATOR: &[u8; 112] = include_bytes!("../../../cyw43_iso/work/iso-blob-rx/allocator.bin");
-const RX_STREAM_IMAGE: &[u8; 1024] = include_bytes!("../../../cyw43_iso/work/iso-blob-rx-stream/native.bin");
+use cyw43_controller_blob as blob;
+
+const IMAGE: &[u8; 4096] = blob::continuous::IMAGE;
+const ALLOCATOR: &[u8; 112] = blob::continuous::ALLOCATOR;
+const RX_IMAGE: &[u8; 1024] = blob::rx::IMAGE;
+// The RX and RX-stream images share a reservation size, so one allocator serves
+// both; the TX image reserves more and needs its own.
+const RX_ALLOCATOR: &[u8; 112] = blob::rx::ALLOCATOR;
+const RX_STREAM_IMAGE: &[u8; 1024] = blob::rx_stream::IMAGE;
 const LOOKUP: u32 = 0x203a34;
 const STOCK_LOOKUP: u32 = 0xd035d;
 const TABLE: [u32; 11] = [
