@@ -1002,3 +1002,6 @@ where
         true
     }
 }
+
+#[cfg(feature = "bluetooth-iso")]
+include!("iso_bootstrap.rs");
