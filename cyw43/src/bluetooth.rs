@@ -2,9 +2,14 @@ use core::cell::RefCell;
 use core::future::Future;
 use core::mem::MaybeUninit;
 
+<<<<<<< HEAD
 use aligned::{A4, Aligned};
 use bt_hci::transport::WithIndicator;
 use bt_hci::{ControllerToHostPacket, FromHciBytes, FromHciBytesError, HostToControllerPacket, PacketKind, WriteHci};
+=======
+use bt_hci::transport::{PacketToController, PacketToHost, WithIndicator};
+use bt_hci::{FromHciBytes, FromHciBytesError, PacketKind, ReadHciError};
+>>>>>>> 080b8a79c (build(cyw43): move the HCI transport to bt-hci 0.11)
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::zerocopy_channel;
@@ -497,6 +502,18 @@ impl From<FromHciBytesError> for Error {
     }
 }
 
+// Reading a queued packet cannot fail at the I/O layer, so only the two
+// framing outcomes are reachable. `ExternalController` also requires this
+// conversion from its transport's error type.
+impl From<ReadHciError<core::convert::Infallible>> for Error {
+    fn from(e: ReadHciError<core::convert::Infallible>) -> Self {
+        match e {
+            ReadHciError::BufferTooSmall => Error::Io(ErrorKind::InvalidInput),
+            _ => Error::Io(ErrorKind::InvalidData),
+        }
+    }
+}
+
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Debug::fmt(self, f)
@@ -518,15 +535,37 @@ impl embedded_io_async::Error for Error {
 }
 
 impl<'d> bt_hci::transport::Transport for BtDriver<'d> {
-    /// A short buffer returns `InvalidInput` without consuming the queued packet.
-    fn read<'a>(&self, rx: &'a mut [u8]) -> impl Future<Output = Result<ControllerToHostPacket<'a>, Self::Error>> {
+    /// A buffer too small for the packet's data returns `InvalidInput` and
+    /// leaves the packet queued so a larger buffer can retry. Anything that
+    /// will not parse is reported and dropped, because retrying it would
+    /// wedge the queue.
+    fn read<'a, P: PacketToHost<'a>>(&self, rx: &'a mut [u8]) -> impl Future<Output = Result<P, Self::Error>> {
         async {
             let ch = &mut *self.rx.borrow_mut();
-            let buf = ch.receive().await;
-            let n = buf.len;
-            if n > rx.len() {
-                return Err(Error::Io(ErrorKind::InvalidInput));
+            let mut keep_queued = false;
+            let outcome = {
+                let queued = ch.receive().await;
+                match queued.buf[..queued.len].split_first() {
+                    None => Err(Error::Io(ErrorKind::InvalidData)),
+                    Some((&indicator, mut payload)) => match PacketKind::from_hci_bytes_complete(&[indicator]) {
+                        Err(e) => Err(e.into()),
+                        Ok(kind) => match P::read_hci(kind, &mut payload, rx) {
+                            Err(ReadHciError::BufferTooSmall) => {
+                                keep_queued = true;
+                                Err(Error::Io(ErrorKind::InvalidInput))
+                            }
+                            Err(e) => Err(e.into()),
+                            // Trailing bytes mean the controller framed it wrong.
+                            Ok(_) if !payload.is_empty() => Err(Error::Io(ErrorKind::InvalidData)),
+                            Ok(packet) => Ok(packet),
+                        },
+                    },
+                }
+            };
+            if !keep_queued {
+                ch.receive_done();
             }
+<<<<<<< HEAD
             rx[..n].copy_from_slice(&buf.buf[..n]);
             buf.receive_done();
 
@@ -536,11 +575,14 @@ impl<'d> bt_hci::transport::Transport for BtDriver<'d> {
                 return Err(Error::Io(ErrorKind::InvalidData));
             }
             Ok(pkt)
+=======
+            outcome
+>>>>>>> 080b8a79c (build(cyw43): move the HCI transport to bt-hci 0.11)
         }
     }
 
     /// Write a complete HCI packet from the tx buffer
-    fn write<T: HostToControllerPacket>(&self, val: &T) -> impl Future<Output = Result<(), Self::Error>> {
+    fn write<P: PacketToController>(&self, val: &P) -> impl Future<Output = Result<(), Self::Error>> {
         async {
             let ch = &mut *self.tx.borrow_mut();
             let mut buf = ch.send().await;
@@ -561,6 +603,7 @@ mod tests {
     use core::pin::pin;
     use core::task::{Context, Poll, Waker};
 
+    use bt_hci::ControllerToHostPacket;
     use bt_hci::data::IsoPacketBoundary;
     use bt_hci::transport::Transport;
 
@@ -586,19 +629,22 @@ mod tests {
         packet
     }
 
+    // `Transport::read` fills the caller's buffer with the packet's data load,
+    // so the buffer bound is the 30-byte load, not the 35-byte wire packet.
     #[test]
     fn inbound_iso_accepts_exact_buffer_and_keeps_packet_on_short_buffer() {
         let mut state = BtState::new();
         let (mut runner, driver) = new(&mut state);
         enqueue(&mut runner, &iso());
-        for capacity in [0, 34] {
+        for capacity in [0, 29] {
             assert!(matches!(
-                ready(driver.read(&mut [0; 35][..capacity])),
+                ready(driver.read::<ControllerToHostPacket>(&mut [0; 30][..capacity])),
                 Err(Error::Io(ErrorKind::InvalidInput))
             ));
         }
-        let mut buffer = [0; 35];
-        let ControllerToHostPacket::Iso(packet) = ready(driver.read(&mut buffer)).unwrap() else {
+        let mut buffer = [0; 30];
+        let ControllerToHostPacket::Iso(packet) = ready(driver.read::<ControllerToHostPacket>(&mut buffer)).unwrap()
+        else {
             panic!("wrong packet type");
         };
         assert_eq!(packet.handle().raw(), 0x42);
@@ -611,6 +657,8 @@ mod tests {
         assert_eq!(packet.data(), &[0x5a; 26]);
     }
 
+    // A buffer the host can grow is `InvalidInput` and retryable; bytes the
+    // controller framed wrong are `InvalidData` and dropped.
     #[test]
     fn inbound_iso_rejects_truncated_or_trailing_data_then_reads_next_packet() {
         let mut state = BtState::new();
@@ -623,16 +671,14 @@ mod tests {
         enqueue(&mut runner, &trailing);
         enqueue(&mut runner, &iso());
         let mut buffer = [0; 36];
+        for _ in 0..2 {
+            assert!(matches!(
+                ready(driver.read::<ControllerToHostPacket>(&mut buffer)),
+                Err(Error::Io(ErrorKind::InvalidData))
+            ));
+        }
         assert!(matches!(
-            ready(driver.read(&mut buffer)),
-            Err(Error::Io(ErrorKind::InvalidInput))
-        ));
-        assert!(matches!(
-            ready(driver.read(&mut buffer)),
-            Err(Error::Io(ErrorKind::InvalidData))
-        ));
-        assert!(matches!(
-            ready(driver.read(&mut buffer)),
+            ready(driver.read::<ControllerToHostPacket>(&mut buffer)),
             Ok(ControllerToHostPacket::Iso(_))
         ));
     }
@@ -646,12 +692,12 @@ mod tests {
         enqueue(&mut runner, &timestamped);
         enqueue(&mut runner, &[5, 0x42, 0x20, 4, 0, 8, 0, 0, 0x80]);
         let mut buffer = [0; 39];
-        let ControllerToHostPacket::Iso(packet) = ready(driver.read(&mut buffer)).unwrap() else {
+        let ControllerToHostPacket::Iso(packet) = ready(driver.read::<ControllerToHostPacket>(&mut buffer)).unwrap() else {
             panic!("wrong packet type");
         };
         assert_eq!(packet.data_load_header().unwrap().timestamp, Some(0x12345678));
         assert_eq!(packet.data(), &[0x5a; 26]);
-        let ControllerToHostPacket::Iso(packet) = ready(driver.read(&mut buffer)).unwrap() else {
+        let ControllerToHostPacket::Iso(packet) = ready(driver.read::<ControllerToHostPacket>(&mut buffer)).unwrap() else {
             panic!("wrong packet type");
         };
         let header = packet.data_load_header().unwrap();
