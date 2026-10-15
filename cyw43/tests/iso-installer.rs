@@ -20,8 +20,6 @@ pub struct SpiBus<P, S>(PhantomData<(P, S)>);
 /// to match `extern crate self as cyw43_controller_blob` above. Array sizes are
 /// asserted by `include_bytes!`, so a resized image fails to compile here
 /// rather than silently weakening the checks below.
-pub const ALLOCATOR: &[u8; 112] =
-    include_bytes!("../../../cyw43-controller/cyw43-controller-blob/blobs/rx-stream/allocator.bin");
 pub mod continuous {
     pub const IMAGE: &[u8; 4096] = include_bytes!(
         "../../../cyw43-controller/cyw43-controller-blob/blobs/continuous/native.bin"
@@ -29,12 +27,14 @@ pub mod continuous {
     pub const ALLOCATOR: &[u8; 112] = include_bytes!(
         "../../../cyw43-controller/cyw43-controller-blob/blobs/continuous/allocator.bin"
     );
+    pub const ALLOCATION_BYTES: u32 = 4096;
 }
 pub mod rx {
     pub const IMAGE: &[u8; 1024] =
         include_bytes!("../../../cyw43-controller/cyw43-controller-blob/blobs/rx/native.bin");
     pub const ALLOCATOR: &[u8; 112] =
         include_bytes!("../../../cyw43-controller/cyw43-controller-blob/blobs/rx/allocator.bin");
+    pub const ALLOCATION_BYTES: u32 = 1024;
 }
 pub mod rx_stream {
     pub const IMAGE: &[u8; 1024] =
@@ -42,6 +42,7 @@ pub mod rx_stream {
     pub const ALLOCATOR: &[u8; 112] = include_bytes!(
         "../../../cyw43-controller/cyw43-controller-blob/blobs/rx-stream/allocator.bin"
     );
+    pub const ALLOCATION_BYTES: u32 = 1024;
 }
 
 pub struct Timer;

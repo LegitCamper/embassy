@@ -14,13 +14,6 @@ use embedded_hal_1::digital::OutputPin;
 
 use cyw43_controller_blob as blob;
 
-const IMAGE: &[u8; 4096] = blob::continuous::IMAGE;
-const ALLOCATOR: &[u8; 112] = blob::continuous::ALLOCATOR;
-const RX_IMAGE: &[u8; 1024] = blob::rx::IMAGE;
-// The RX and RX-stream images share a reservation size, so one allocator serves
-// both; the TX image reserves more and needs its own.
-const RX_ALLOCATOR: &[u8; 112] = blob::rx::ALLOCATOR;
-const RX_STREAM_IMAGE: &[u8; 1024] = blob::rx_stream::IMAGE;
 const LOOKUP: u32 = 0x203a34;
 const STOCK_LOOKUP: u32 = 0xd035d;
 const TABLE: [u32; 11] = [
@@ -262,6 +255,29 @@ enum Mode {
     RxStream,
 }
 
+impl Mode {
+    /// Resident image, the bootstrap built for its reservation, and the size
+    /// that bootstrap reserves. The three travel together because the
+    /// reservation size is baked into the bootstrap's instruction stream: a
+    /// bootstrap paired with the wrong image would let the controller hand out
+    /// memory the image occupies.
+    fn image(self) -> (&'static [u8], &'static [u8; 112], u32) {
+        match self {
+            Self::Tx => (
+                blob::continuous::IMAGE,
+                blob::continuous::ALLOCATOR,
+                blob::continuous::ALLOCATION_BYTES,
+            ),
+            Self::Rx => (blob::rx::IMAGE, blob::rx::ALLOCATOR, blob::rx::ALLOCATION_BYTES),
+            Self::RxStream => (
+                blob::rx_stream::IMAGE,
+                blob::rx_stream::ALLOCATOR,
+                blob::rx_stream::ALLOCATION_BYTES,
+            ),
+        }
+    }
+}
+
 struct Session<'r, 'd, P, S> {
     runner: &'r mut Runner<'d, SpiBus<P, S>>,
     allocation: u32,
@@ -351,7 +367,8 @@ impl<P: OutputPin, S: SpiBusCyw43> Session<'_, '_, P, S> {
         let bounds = self.read::<12>(0x200560).await?;
         let cursor = u32::from_le_bytes(bounds[4..8].try_into().unwrap());
         let end = u32::from_le_bytes(bounds[8..12].try_into().unwrap());
-        let size = if self.mode != Mode::Tx { 1024 } else { 4096 };
+        let (image, bootstrap, size) = self.mode.image();
+        debug_assert_eq!(image.len() as u32, size, "image does not fill its reservation");
         if !valid_bounds(bounds[0], cursor, end, size) {
             return Err(Error::Allocation);
         }
@@ -359,11 +376,7 @@ impl<P: OutputPin, S: SpiBusCyw43> Session<'_, '_, P, S> {
         if self.read::<112>(0xd0f90).await? != [0; 112] {
             return Err(Error::StockMismatch);
         }
-        let mut allocator = if self.mode != Mode::Tx {
-            *RX_ALLOCATOR
-        } else {
-            *ALLOCATOR
-        };
+        let mut allocator = *bootstrap;
         allocator[100..108].copy_from_slice(&bounds[4..12]);
         self.write(0xd0f90, &allocator).await?;
         if self.word(LOOKUP).await? != STOCK_LOOKUP {
@@ -390,11 +403,6 @@ impl<P: OutputPin, S: SpiBusCyw43> Session<'_, '_, P, S> {
                 return Err(Error::Allocation);
             }
         }
-        let image: &[u8] = match self.mode {
-            Mode::Tx => IMAGE,
-            Mode::Rx => RX_IMAGE,
-            Mode::RxStream => RX_STREAM_IMAGE,
-        };
         for (index, chunk) in image.as_chunks::<64>().0.iter().enumerate() {
             self.write(cursor + index as u32 * 64, chunk).await?;
         }
