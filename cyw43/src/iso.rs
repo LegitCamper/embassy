@@ -7,11 +7,14 @@ use core::future::Future;
 
 use embedded_hal_1::digital::OutputPin;
 
-use crate::{Cyw43439, Runner, SpiBus, SpiBusCyw43};
+use crate::{A4, Aligned, Cyw43439, Runner, SpiBus, SpiBusCyw43};
 
 pub use cyw43_controller::{
-    BOOT_FIRMWARE, BOOT_FIRMWARE_SHA256, Error, Installed, InstalledRxDiagnostic, TimerHopTrace,
+    BOOT_FIRMWARE_SHA256, Error, Installed, InstalledRxDiagnostic, TimerHopTrace,
 };
+
+/// Tested `.0065` Bluetooth firmware with the resident bootstrap reservation.
+pub static BOOT_FIRMWARE: &Aligned<A4, [u8]> = &Aligned(*cyw43_controller::BOOT_FIRMWARE);
 
 impl<PWR, SPI> cyw43_controller::Runtime for Runner<'_, SpiBus<PWR, SPI>, Cyw43439>
 where
