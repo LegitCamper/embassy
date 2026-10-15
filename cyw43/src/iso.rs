@@ -68,9 +68,13 @@ pub async fn install_rx_hop_diagnostic<PWR: OutputPin, SPI: SpiBusCyw43>(
 
 /// Install timer-driven CSA#2 hopping continuous RX diagnostic.
 ///
-/// The event counter advances every 32 stock DTM countdown callbacks. The
-/// first valid counter marker anchors the diagnostic phase; this is not
-/// BIGInfo-derived broadcast synchronization.
+/// Before marker acquisition, every accepted stock DTM countdown callback
+/// scans the next CSA#2 event candidate. The first valid counter marker anchors
+/// the diagnostic phase, after which the event counter advances every 32
+/// callbacks. [`TimerHopTrace::preacquisition_scan_retunes`] distinguishes scan
+/// retunes from synchronized advances. The callback cadence has only a static
+/// nominal association; this is not measured timing or BIGInfo-derived
+/// broadcast synchronization.
 pub async fn install_rx_timer_hop_diagnostic<PWR: OutputPin, SPI: SpiBusCyw43>(
     runner: &mut Runner<'_, SpiBus<PWR, SPI>, Cyw43439>,
 ) -> Result<InstalledRxDiagnostic, Error> {
